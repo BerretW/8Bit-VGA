@@ -20,6 +20,7 @@
 # set_location_assignment PIN_XX -to irq_n
 # set_location_assignment PIN_XX -to reset_n
 # set_location_assignment PIN_XX -to clk_pix
+# set_location_assignment PIN_XX -to test_mode
 
 # ------- VGA vystupy -------
 # set_location_assignment PIN_XX -to vga_r[0]
@@ -33,6 +34,10 @@
 # set_location_assignment PIN_XX -to vga_b[2]
 # set_location_assignment PIN_XX -to hsync_n
 # set_location_assignment PIN_XX -to vsync_n
+
+# ------- EEPROM 24LC64 (I2C) -------
+# set_location_assignment PIN_XX -to eep_scl
+# set_location_assignment PIN_XX -to eep_sda
 
 # ------- SRAM -------
 # set_location_assignment PIN_XX -to sram_a[0]

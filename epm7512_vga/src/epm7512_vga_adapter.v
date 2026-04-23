@@ -1,6 +1,7 @@
 module epm7512_vga_adapter (
     input  wire        clk_pix,
     input  wire        reset_n,
+    input  wire        test_mode,
 
     input  wire [15:0] cpu_a,
     inout  wire [7:0]  cpu_d,
@@ -16,6 +17,9 @@ module epm7512_vga_adapter (
     output wire [2:0]  vga_b,
     output wire        hsync_n,
     output wire        vsync_n,
+
+    output wire        eep_scl,
+    inout  wire        eep_sda,
 
     output wire [16:0] sram_a,
     inout  wire [7:0]  sram_d,
@@ -50,6 +54,8 @@ module epm7512_vga_adapter (
     localparam REG_FONT_PTR_HI  = 5'h0B;
     localparam REG_FONT_DATA    = 5'h0C;
     localparam REG_STATUS       = 5'h0D;
+    localparam REG_EE_I2C_CTRL  = 5'h0E;
+    localparam REG_EE_I2C_STAT  = 5'h0F;
 
     localparam VID_REQ_NONE  = 2'd0;
     localparam VID_REQ_CHAR  = 2'd1;
@@ -71,6 +77,9 @@ module epm7512_vga_adapter (
     reg [7:0] current_glyph;
     reg [7:0] next_glyph;
 
+    reg       eep_scl_r;
+    reg       eep_sda_drive_low_r;
+
     reg memw_n_d;
     reg memr_n_d;
 
@@ -89,10 +98,16 @@ module epm7512_vga_adapter (
 
     wire [7:0] cpu_write_data;
     wire [7:0] sram_d_in;
+    wire       eep_sda_in;
 
     wire visible;
     wire pixel_on;
     wire vblank;
+    wire demo_mode;
+
+    wire [2:0] demo_r;
+    wire [2:0] demo_g;
+    wire [2:0] demo_b;
 
     wire cpu_sel;
     wire cpu_wr_stb;
@@ -128,10 +143,12 @@ module epm7512_vga_adapter (
 
     assign cpu_write_data = cpu_d;
     assign sram_d_in = sram_d;
+    assign eep_sda_in = eep_sda;
 
     assign visible = (h_count < H_VISIBLE) && (v_count < V_VISIBLE);
     assign pixel_on = current_glyph[3'd7 - h_count[2:0]];
     assign vblank = (v_count >= V_VISIBLE);
+    assign demo_mode = test_mode;
 
     assign cpu_sel = (cpu_a[15:8] == 8'hC0);
 
@@ -168,12 +185,19 @@ module epm7512_vga_adapter (
     assign bg_g = bg_reg[5:3];
     assign bg_b = {bg_reg[7:6], bg_reg[6]};
 
-    assign vga_r = (!ctrl_reg[0] || !visible) ? 3'b000 : (pixel_on ? fg_r : bg_r);
-    assign vga_g = (!ctrl_reg[0] || !visible) ? 3'b000 : (pixel_on ? fg_g : bg_g);
-    assign vga_b = (!ctrl_reg[0] || !visible) ? 3'b000 : (pixel_on ? fg_b : bg_b);
+    assign demo_r = {h_count[7], v_count[6], h_count[4] ^ v_count[4]};
+    assign demo_g = {v_count[7], h_count[6], h_count[5] ^ v_count[5]};
+    assign demo_b = {h_count[8] ^ v_count[8], h_count[3], v_count[3]};
+
+    assign vga_r = !visible ? 3'b000 : (demo_mode ? demo_r : (!ctrl_reg[0] ? 3'b000 : (pixel_on ? fg_r : bg_r)));
+    assign vga_g = !visible ? 3'b000 : (demo_mode ? demo_g : (!ctrl_reg[0] ? 3'b000 : (pixel_on ? fg_g : bg_g)));
+    assign vga_b = !visible ? 3'b000 : (demo_mode ? demo_b : (!ctrl_reg[0] ? 3'b000 : (pixel_on ? fg_b : bg_b)));
 
     assign hsync_n = ~((h_count >= (H_VISIBLE + H_FRONT)) && (h_count < (H_VISIBLE + H_FRONT + H_SYNC)));
     assign vsync_n = ~((v_count >= (V_VISIBLE + V_FRONT)) && (v_count < (V_VISIBLE + V_FRONT + V_SYNC)));
+
+    assign eep_scl = eep_scl_r;
+    assign eep_sda = eep_sda_drive_low_r ? 1'b0 : 1'bZ;
 
     assign cpu_d = (cpu_sel && !memr_n) ? cpu_read_data : 8'hZZ;
 
@@ -203,6 +227,8 @@ module epm7512_vga_adapter (
             REG_FONT_PTR_HI:  cpu_read_data = font_ptr[15:8];
             REG_FONT_DATA:    cpu_read_data = sram_d_in;
             REG_STATUS:       cpu_read_data = {7'b0000000, vblank};
+            REG_EE_I2C_CTRL:  cpu_read_data = {6'b000000, eep_sda_drive_low_r, eep_scl_r};
+            REG_EE_I2C_STAT:  cpu_read_data = {5'b00000, eep_sda_drive_low_r, eep_scl_r, eep_sda_in};
             default:      cpu_read_data = 8'hFF;
         endcase
     end
@@ -211,7 +237,7 @@ module epm7512_vga_adapter (
         vid_req_kind = VID_REQ_NONE;
         vid_req_addr = 16'h0000;
 
-        if (visible) begin
+        if (!demo_mode && visible) begin
             if ((h_count[2:0] == 3'd5) && (char_col < 7'd79)) begin
                 vid_req_kind = VID_REQ_CHAR;
                 vid_req_addr = char_addr_next;
@@ -219,10 +245,10 @@ module epm7512_vga_adapter (
                 vid_req_kind = VID_REQ_GLYPH;
                 vid_req_addr = glyph_addr_fetched;
             end
-        end else if (h_count == (H_TOTAL - 3)) begin
+        end else if (!demo_mode && (h_count == (H_TOTAL - 3))) begin
             vid_req_kind = VID_REQ_CHAR;
             vid_req_addr = next_line_char0_addr;
-        end else if (h_count == (H_TOTAL - 2)) begin
+        end else if (!demo_mode && (h_count == (H_TOTAL - 2))) begin
             vid_req_kind = VID_REQ_GLYPH;
             vid_req_addr = next_line_glyph0_addr;
         end
@@ -282,6 +308,9 @@ module epm7512_vga_adapter (
             current_glyph <= 8'h00;
             next_glyph    <= 8'h00;
 
+            eep_scl_r <= 1'b1;
+            eep_sda_drive_low_r <= 1'b0;
+
             last_vid_req_kind <= VID_REQ_NONE;
 
             memw_n_d  <= 1'b1;
@@ -329,6 +358,10 @@ module epm7512_vga_adapter (
                     REG_FONT_BASE_HI:  font_base[15:8] <= cpu_write_data;
                     REG_FONT_PTR_LO:   font_ptr[7:0] <= cpu_write_data;
                     REG_FONT_PTR_HI:   font_ptr[15:8] <= cpu_write_data;
+                    REG_EE_I2C_CTRL: begin
+                        eep_scl_r <= cpu_write_data[0];
+                        eep_sda_drive_low_r <= cpu_write_data[1];
+                    end
                     default: ;
                 endcase
             end
