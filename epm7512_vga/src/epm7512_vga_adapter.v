@@ -92,7 +92,6 @@ module epm7512_vga_adapter (
 
     reg [7:0] cpu_read_data;
 
-    reg [1:0] last_vid_req_kind;
     reg [1:0] vid_req_kind;
     reg [15:0] vid_req_addr;
 
@@ -179,11 +178,11 @@ module epm7512_vga_adapter (
 
     assign fg_r = fg_reg[2:0];
     assign fg_g = fg_reg[5:3];
-    assign fg_b = {fg_reg[7:6], fg_reg[6]};
+    assign fg_b = {fg_reg[7:6], fg_reg[7]};
 
     assign bg_r = bg_reg[2:0];
     assign bg_g = bg_reg[5:3];
-    assign bg_b = {bg_reg[7:6], bg_reg[6]};
+    assign bg_b = {bg_reg[7:6], bg_reg[7]};
 
     assign demo_r = {h_count[7], v_count[6], h_count[4] ^ v_count[4]};
     assign demo_g = {v_count[7], h_count[6], h_count[5] ^ v_count[5]};
@@ -311,25 +310,21 @@ module epm7512_vga_adapter (
             eep_scl_r <= 1'b1;
             eep_sda_drive_low_r <= 1'b0;
 
-            last_vid_req_kind <= VID_REQ_NONE;
-
             memw_n_d  <= 1'b1;
             memr_n_d  <= 1'b1;
         end else begin
             memw_n_d <= memw_n;
             memr_n_d <= memr_n;
 
-            last_vid_req_kind <= vid_req_kind;
-
-            if (last_vid_req_kind == VID_REQ_CHAR) begin
+            if (vid_req_kind == VID_REQ_CHAR) begin
                 fetched_char <= sram_d_in;
             end
 
-            if (last_vid_req_kind == VID_REQ_GLYPH) begin
+            if (vid_req_kind == VID_REQ_GLYPH) begin
                 next_glyph <= sram_d_in;
             end
 
-            if (visible && (h_count[2:0] == 3'd0)) begin
+            if (h_count[2:0] == 3'd7) begin
                 current_glyph <= next_glyph;
             end
 
